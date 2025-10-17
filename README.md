@@ -1,4 +1,4 @@
-# 🧠 Answer IQ: Retrieval-Augmented Knowledge Search System
+# Answer IQ: Retrieval-Augmented Knowledge Search System
 
 ## 1. Abstract
 **Answer IQ (RAG-Gemini)** is an intelligent knowledge base assistant built using **Retrieval-Augmented Generation (RAG)** principles.  
@@ -37,9 +37,3 @@ The architecture follows the **Retrieval-Augmented Generation (RAG)** paradigm w
 3. **Synthesis Engine** – Transformer model generates final natural language responses.
 
 ---
-
-## 5. Architecture Diagram
-*(Insert your architecture diagram image here)*  
-Example:
-```markdown
-![Architecture Diagram](assets/rag-architecture.png)
