@@ -1,0 +1,40 @@
+# =============================================================================
+# Streamlit Theme Configuration
+# Professional Navy + Royal Blue Minimal Theme
+# =============================================================================
+
+[server]
+enableCORS = false
+enableXsrfProtection = false
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
+
+# -----------------------------------------------------------------------------
+# Theme Configuration - Navy + Royal Blue (Dark Mode)
+# -----------------------------------------------------------------------------
+# Design Principles:
+# - Deep Navy backgrounds for reduced eye strain
+# - Royal Blue for primary actions and accents
+# - Soft off-white text (not pure white)
+# - Calm, enterprise-grade, professional appearance
+# - WCAG AA compliant contrast ratios
+# -----------------------------------------------------------------------------
+
+[theme]
+# Primary action color - Royal Blue
+primaryColor = "#2563EB"
+
+# Background - Deep Navy (not pure black for comfort)
+backgroundColor = "#0F172A"
+
+# Secondary background (cards/containers) - Dark Charcoal Navy
+secondaryBackgroundColor = "#1E293B"
+
+# Text - Soft off-white (reduces eye strain vs pure white)
+textColor = "#E2E8F0"
+
+# Font - Clean sans-serif
+font = "sans serif"
