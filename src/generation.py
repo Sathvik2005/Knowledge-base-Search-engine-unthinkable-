@@ -1,19 +1,16 @@
 """
 Generation module for Answer IQ.
-Handles context-aware answer generation using local transformer models.
+Handles context-aware answer generation using API-based LLMs.
 """
 
-from typing import List, Optional, Dict
+from typing import List
 from dataclasses import dataclass
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
-import torch
+from openai import OpenAI
 
 from .config import (
-    GENERATION_MODEL_NAME,
+    GENERATION_API_MODEL,
     MAX_NEW_TOKENS,
-    TEMPERATURE,
-    DO_SAMPLE,
-    DEVICE
+    TEMPERATURE
 )
 from .retrieval import SearchResult
 
@@ -31,43 +28,32 @@ class GeneratedAnswer:
 
 class AnswerGenerator:
     """
-    Context-aware answer generation using local transformer models.
+    Context-aware answer generation using API-based LLMs.
     Designed to minimize hallucinations and stay grounded in retrieved context.
     """
     
-    def __init__(self, model_name: str = GENERATION_MODEL_NAME):
+    def __init__(self, api_key: str, model_name: str = GENERATION_API_MODEL):
         """
         Initialize the answer generator.
         
         Args:
-            model_name: HuggingFace model identifier
+            api_key: API key for the LLM provider
+            model_name: API model identifier
         """
+        self.api_key = api_key
         self.model_name = model_name
-        self.tokenizer = None
-        self.model = None
-        self.pipe = None
+        self.client = None
         self._loaded = False
     
     def load(self) -> None:
         """Load the generation model into memory."""
         if self._loaded:
             return
-        
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
-        
-        # Move to appropriate device
-        device_id = 0 if DEVICE == "cuda" and torch.cuda.is_available() else -1
-        
-        self.pipe = pipeline(
-            "text2text-generation",
-            model=self.model,
-            tokenizer=self.tokenizer,
-            device=device_id,
-            max_new_tokens=MAX_NEW_TOKENS,
-            do_sample=DO_SAMPLE,
-            temperature=TEMPERATURE
-        )
+
+        if not self.api_key or not self.api_key.strip():
+            raise ValueError("API key is required for answer generation.")
+
+        self.client = OpenAI(api_key=self.api_key.strip())
         
         self._loaded = True
     
@@ -101,11 +87,21 @@ class AnswerGenerator:
             )
         
         # Build the prompt
-        prompt = self._build_prompt(query, context, concise)
+        system_prompt, user_prompt = self._build_prompt(query, context, concise)
         
         # Generate answer
         try:
-            output = self.pipe(prompt)[0]['generated_text']
+            completion = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=MAX_NEW_TOKENS,
+                temperature=0.2 if concise else TEMPERATURE
+            )
+
+            output = completion.choices[0].message.content or ""
             answer = self._postprocess_answer(output)
         except Exception as e:
             return GeneratedAnswer(
@@ -135,22 +131,25 @@ class AnswerGenerator:
             is_grounded=True
         )
     
-    def _build_prompt(self, query: str, context: str, concise: bool) -> str:
+    def _build_prompt(self, query: str, context: str, concise: bool):
         """Build the generation prompt."""
         style_instruction = "Provide a brief, direct answer." if concise else "Provide a comprehensive, detailed answer."
-        
-        prompt = f"""Answer the question based only on the provided context. If the context does not contain enough information to answer the question, say so clearly.
 
-Context:
+        system_prompt = (
+            "You are a retrieval-grounded assistant. "
+            "Answer only using the provided context. "
+            "If the context is insufficient, say that clearly. "
+            "Do not hallucinate or invent facts."
+        )
+
+        user_prompt = f"""Context:
 {context}
 
 Question: {query}
 
-Instructions: {style_instruction} Do not make up information that is not in the context.
+Instructions: {style_instruction}"""
 
-Answer:"""
-        
-        return prompt
+        return system_prompt, user_prompt
     
     def _postprocess_answer(self, answer: str) -> str:
         """Clean up the generated answer."""

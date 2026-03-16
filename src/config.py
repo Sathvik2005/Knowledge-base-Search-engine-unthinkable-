@@ -32,6 +32,7 @@ SIMILARITY_THRESHOLD = 0.3
 
 # Generation model settings
 GENERATION_MODEL_NAME = "google/flan-t5-base"
+GENERATION_API_MODEL = "gpt-4o-mini"
 MAX_NEW_TOKENS = 256
 TEMPERATURE = 0.7
 DO_SAMPLE = True

@@ -23,7 +23,7 @@ import json
 # Import application modules
 from src.config import (
     CHUNK_SIZE, CHUNK_OVERLAP, TOP_K_RESULTS,
-    EMBEDDING_MODEL_NAME, GENERATION_MODEL_NAME, WHISPER_MODEL_SIZE,
+    EMBEDDING_MODEL_NAME, GENERATION_API_MODEL, WHISPER_MODEL_SIZE,
     WHISPER_MODEL_NAME, HISTORY_FILE, CACHE_DIR
 )
 from src.ingestion import IngestionPipeline
@@ -69,6 +69,12 @@ def initialize_session_state():
     
     if 'query_history' not in st.session_state:
         st.session_state.query_history = load_history()
+
+    if 'llm_api_key' not in st.session_state:
+        st.session_state.llm_api_key = os.getenv("OPENAI_API_KEY", "")
+
+    if 'llm_model' not in st.session_state:
+        st.session_state.llm_model = GENERATION_API_MODEL
     
     if 'kb_ready' not in st.session_state:
         st.session_state.kb_ready = False
@@ -101,6 +107,9 @@ def save_history(history):
 
 def initialize_models():
     """Initialize embedding and generation models."""
+    if not st.session_state.llm_api_key.strip():
+        raise ValueError("Please enter an API key in the sidebar before processing documents.")
+
     with st.spinner("Loading embedding model..."):
         st.session_state.embedding_model = EmbeddingModel(EMBEDDING_MODEL_NAME)
         st.session_state.embedding_model.load()
@@ -109,8 +118,11 @@ def initialize_models():
         dimension = st.session_state.embedding_model.dimension
         st.session_state.faiss_index = FAISSIndex(dimension=dimension)
     
-    with st.spinner("Loading generation model..."):
-        st.session_state.generator = AnswerGenerator(GENERATION_MODEL_NAME)
+    with st.spinner("Connecting to LLM API..."):
+        st.session_state.generator = AnswerGenerator(
+            api_key=st.session_state.llm_api_key,
+            model_name=st.session_state.llm_model
+        )
         st.session_state.generator.load()
     
     # Create retriever
@@ -135,7 +147,16 @@ def process_documents(uploaded_files):
     
     # Ensure models are initialized
     if not st.session_state.initialized:
-        initialize_models()
+        try:
+            initialize_models()
+        except Exception as e:
+            error_message = (
+                "Failed to initialize AI models. "
+                "Please verify your API key and model in the sidebar. "
+                f"Details: {str(e)}"
+            )
+            st.session_state.processing_status.append(f"Error: {error_message}")
+            return False, error_message
     
     # Process files
     pipeline = st.session_state.ingestion_pipeline
@@ -198,6 +219,37 @@ def render_sidebar():
     
     st.sidebar.markdown("### 📚 Answer IQ")
     st.sidebar.caption("Enterprise RAG Knowledge Base")
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("LLM API Settings")
+
+    api_key_input = st.sidebar.text_input(
+        "API Key",
+        value=st.session_state.llm_api_key,
+        type="password",
+        help="Enter your OpenAI-compatible API key. The key is stored only in this session."
+    )
+    if api_key_input != st.session_state.llm_api_key:
+        st.session_state.llm_api_key = api_key_input
+        st.session_state.initialized = False
+        st.session_state.generator = None
+        st.session_state.query_processor = None
+
+    model_input = st.sidebar.text_input(
+        "Model",
+        value=st.session_state.llm_model,
+        help="Example: gpt-4o-mini"
+    )
+    if model_input and model_input != st.session_state.llm_model:
+        st.session_state.llm_model = model_input.strip()
+        st.session_state.initialized = False
+        st.session_state.generator = None
+        st.session_state.query_processor = None
+
+    if st.session_state.llm_api_key.strip():
+        st.sidebar.success("API key configured")
+    else:
+        st.sidebar.warning("Enter API key to enable answer generation")
     
     st.sidebar.markdown("---")
     
@@ -248,7 +300,7 @@ def render_sidebar():
     # System Information
     with st.sidebar.expander("System Configuration"):
         st.text(f"Embedding: {EMBEDDING_MODEL_NAME.split('/')[-1]}")
-        st.text(f"Generator: {GENERATION_MODEL_NAME.split('/')[-1]}")
+        st.text(f"Generator(API): {st.session_state.llm_model}")
         st.text(f"Whisper: {WHISPER_MODEL_SIZE}")
         st.text(f"Chunk Size: {CHUNK_SIZE}")
         st.text(f"Top-K: {TOP_K_RESULTS}")
