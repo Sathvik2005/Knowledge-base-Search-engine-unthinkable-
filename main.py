@@ -23,8 +23,9 @@ import json
 # Import application modules
 from src.config import (
     CHUNK_SIZE, CHUNK_OVERLAP, TOP_K_RESULTS,
-    EMBEDDING_MODEL_NAME, GENERATION_API_MODEL, WHISPER_MODEL_SIZE,
-    WHISPER_MODEL_NAME, HISTORY_FILE, CACHE_DIR
+    EMBEDDING_MODEL_NAME, GENERATION_API_MODEL,
+    OPENAI_DEFAULT_MODEL, GROQ_DEFAULT_MODEL,
+    WHISPER_MODEL_SIZE, WHISPER_MODEL_NAME, HISTORY_FILE, CACHE_DIR
 )
 from src.ingestion import IngestionPipeline
 from src.embeddings import EmbeddingModel
@@ -70,8 +71,11 @@ def initialize_session_state():
     if 'query_history' not in st.session_state:
         st.session_state.query_history = load_history()
 
+    if 'llm_provider' not in st.session_state:
+        st.session_state.llm_provider = "groq"  # Groq is free-tier friendly
+
     if 'llm_api_key' not in st.session_state:
-        st.session_state.llm_api_key = os.getenv("OPENAI_API_KEY", "")
+        st.session_state.llm_api_key = os.getenv("GROQ_API_KEY", os.getenv("OPENAI_API_KEY", ""))
 
     if 'llm_model' not in st.session_state:
         st.session_state.llm_model = GENERATION_API_MODEL
@@ -121,7 +125,8 @@ def initialize_models():
     with st.spinner("Connecting to LLM API..."):
         st.session_state.generator = AnswerGenerator(
             api_key=st.session_state.llm_api_key,
-            model_name=st.session_state.llm_model
+            model_name=st.session_state.llm_model,
+            provider=st.session_state.llm_provider,
         )
         st.session_state.generator.load()
     
@@ -215,19 +220,85 @@ def execute_query(query: str, concise: bool = True):
 # =============================================================================
 
 def render_sidebar():
-    """Render the sidebar with document upload and status."""
-    
+    """Render the sidebar: provider config, document upload, KB status."""
+
+    PROVIDER_MODELS = {
+        "openai": ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo", "Custom..."],
+        "groq":   ["llama-3.3-70b-versatile", "llama-3.1-8b-instant",
+                   "mixtral-8x7b-32768", "gemma2-9b-it", "Custom..."],
+    }
+    PROVIDER_DEFAULTS = {
+        "openai": OPENAI_DEFAULT_MODEL,
+        "groq":   GROQ_DEFAULT_MODEL,
+    }
+    PROVIDER_KEY_URLS = {
+        "openai": "https://platform.openai.com/api-keys",
+        "groq":   "https://console.groq.com/keys",
+    }
+
     st.sidebar.markdown("### 📚 Answer IQ")
-    st.sidebar.caption("Enterprise RAG Knowledge Base")
+    st.sidebar.caption("RAG-powered Knowledge Base")
 
+    # ── Step 1 · API Setup ────────────────────────────────────────────────
     st.sidebar.markdown("---")
-    st.sidebar.subheader("LLM API Settings")
+    st.sidebar.markdown("**Step 1 · API Setup**")
 
+    provider_display = st.sidebar.radio(
+        "Provider",
+        options=["OpenAI", "Groq"],
+        index=0 if st.session_state.llm_provider == "openai" else 1,
+        horizontal=True,
+    )
+    new_provider = provider_display.lower()
+
+    # Reset model & key when provider changes
+    if new_provider != st.session_state.llm_provider:
+        st.session_state.llm_provider = new_provider
+        st.session_state.llm_model = PROVIDER_DEFAULTS[new_provider]
+        st.session_state.llm_api_key = os.getenv(
+            "OPENAI_API_KEY" if new_provider == "openai" else "GROQ_API_KEY", ""
+        )
+        st.session_state.initialized = False
+        st.session_state.generator = None
+        st.session_state.query_processor = None
+
+    current_provider = st.session_state.llm_provider
+    model_list = PROVIDER_MODELS[current_provider]
+    current_model = st.session_state.llm_model
+
+    # Model selector
+    if current_model in model_list[:-1]:
+        model_idx = model_list.index(current_model)
+    else:
+        model_idx = len(model_list) - 1  # "Custom..."
+
+    selected_opt = st.sidebar.selectbox("Model", model_list, index=model_idx)
+
+    if selected_opt == "Custom...":
+        custom_val = current_model if current_model not in model_list[:-1] else ""
+        custom_id = st.sidebar.text_input(
+            "Model ID",
+            value=custom_val,
+            placeholder="e.g. llama-3.1-70b-versatile",
+        )
+        final_model = custom_id.strip() or PROVIDER_DEFAULTS[current_provider]
+    else:
+        final_model = selected_opt
+
+    if final_model != st.session_state.llm_model:
+        st.session_state.llm_model = final_model
+        st.session_state.initialized = False
+        st.session_state.generator = None
+        st.session_state.query_processor = None
+
+    # API key field
+    placeholder_key = "sk-…" if current_provider == "openai" else "gsk_…"
     api_key_input = st.sidebar.text_input(
         "API Key",
         value=st.session_state.llm_api_key,
         type="password",
-        help="Enter your OpenAI-compatible API key. The key is stored only in this session."
+        placeholder=placeholder_key,
+        help="Stored only in this browser session – never persisted to disk.",
     )
     if api_key_input != st.session_state.llm_api_key:
         st.session_state.llm_api_key = api_key_input
@@ -235,92 +306,85 @@ def render_sidebar():
         st.session_state.generator = None
         st.session_state.query_processor = None
 
-    model_input = st.sidebar.text_input(
-        "Model",
-        value=st.session_state.llm_model,
-        help="Example: gpt-4o-mini"
-    )
-    if model_input and model_input != st.session_state.llm_model:
-        st.session_state.llm_model = model_input.strip()
-        st.session_state.initialized = False
-        st.session_state.generator = None
-        st.session_state.query_processor = None
-
     if st.session_state.llm_api_key.strip():
-        st.sidebar.success("API key configured")
+        st.sidebar.success(f"✅ {provider_display} key configured")
     else:
-        st.sidebar.warning("Enter API key to enable answer generation")
-    
+        st.sidebar.warning("⚠️ API key required")
+        key_url = PROVIDER_KEY_URLS[current_provider]
+        st.sidebar.caption(f"[Get a free {provider_display} API key ↗]({key_url})")
+
+    # ── Step 2 · Knowledge Base ───────────────────────────────────────────
     st.sidebar.markdown("---")
-    
-    # Document Upload Section
-    st.sidebar.subheader("Document Upload")
-    
+    st.sidebar.markdown("**Step 2 · Knowledge Base**")
+
     uploaded_files = st.sidebar.file_uploader(
-        "Select PDF or TXT files",
+        "Upload PDF or TXT files",
         type=["pdf", "txt"],
         accept_multiple_files=True,
-        help="Upload documents to build your knowledge base"
+        help="Your documents stay local – only query answers are sent to the API.",
     )
-    
+
     if uploaded_files:
-        st.sidebar.info(f"{len(uploaded_files)} file(s) selected")
-        
-        if st.sidebar.button("Process Documents", type="primary", use_container_width=True):
+        st.sidebar.caption(f"{len(uploaded_files)} file(s) selected")
+        if st.sidebar.button("⚡ Process Documents", type="primary", use_container_width=True):
             success, message = process_documents(uploaded_files)
             if success:
                 st.sidebar.success(message)
             else:
                 st.sidebar.error(message)
-    
-    st.sidebar.markdown("---")
-    
-    # Knowledge Base Status
-    st.sidebar.subheader("Knowledge Base Status")
-    
+
+    # KB stats
     if st.session_state.kb_ready:
         stats = st.session_state.ingestion_pipeline.get_statistics()
-        
-        col1, col2 = st.sidebar.columns(2)
-        col1.metric("Documents", stats['document_count'])
-        col2.metric("Chunks", stats['chunk_count'])
-        
-        st.sidebar.metric("Total Words", f"{stats['total_words']:,}")
-        
+        c1, c2 = st.sidebar.columns(2)
+        c1.metric("Docs", stats['document_count'])
+        c2.metric("Chunks", stats['chunk_count'])
+        st.sidebar.metric("Words", f"{stats['total_words']:,}")
         if stats['documents']:
-            with st.sidebar.expander("Document Details"):
+            with st.sidebar.expander("📄 Loaded files"):
                 for doc in stats['documents']:
-                    st.text(f"{doc['filename']}")
-                    st.caption(f"  Pages: {doc['pages']} | Words: {doc['words']:,}")
+                    st.caption(f"**{doc['filename']}** · {doc['words']:,} words")
     else:
-        st.sidebar.warning("No documents loaded")
-    
+        st.sidebar.info("No documents loaded yet.")
+
+    # ── Footer ────────────────────────────────────────────────────────────
     st.sidebar.markdown("---")
-    
-    # System Information
-    with st.sidebar.expander("System Configuration"):
-        st.text(f"Embedding: {EMBEDDING_MODEL_NAME.split('/')[-1]}")
-        st.text(f"Generator(API): {st.session_state.llm_model}")
-        st.text(f"Whisper: {WHISPER_MODEL_SIZE}")
-        st.text(f"Chunk Size: {CHUNK_SIZE}")
-        st.text(f"Top-K: {TOP_K_RESULTS}")
-    
-    # Clear Button
-    if st.sidebar.button("Clear Knowledge Base", use_container_width=True):
+    with st.sidebar.expander("⚙️ System Info"):
+        st.caption(f"Embeddings: `{EMBEDDING_MODEL_NAME.split('/')[-1]}`")
+        st.caption(f"LLM: `{current_provider.upper()} / {st.session_state.llm_model}`")
+        st.caption(f"Whisper: `{WHISPER_MODEL_SIZE}` · Chunk: {CHUNK_SIZE} · Top-K: {TOP_K_RESULTS}")
+
+    if st.sidebar.button("🗑️ Clear Knowledge Base", use_container_width=True):
         st.session_state.ingestion_pipeline.clear()
         if st.session_state.faiss_index:
             st.session_state.faiss_index.clear()
         st.session_state.kb_ready = False
-        st.sidebar.info("Knowledge base cleared")
+        st.sidebar.info("Knowledge base cleared.")
         st.rerun()
 
 
 def render_text_query_tab():
     """Render the text query interface."""
-    
-    st.subheader("📝 Text Query")
-    st.caption("Enter your question below to search the knowledge base")
-    
+
+    if not st.session_state.kb_ready:
+        st.markdown(
+            """
+            <div style="text-align:center; padding:3rem 1rem;">
+              <div style="font-size:3rem;">📖</div>
+              <h3 style="color:#E2E8F0; margin:0.5rem 0;">No documents loaded</h3>
+              <p style="color:#94A3B8;">
+                Upload PDF or TXT files in the sidebar, then click
+                <strong>⚡ Process Documents</strong> to build your knowledge base.
+              </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.subheader("💬 Ask a Question")
+    st.caption("Type your question – the AI answers using only your documents")
+
     # Query input
     query = st.text_area(
         "Your Question",
@@ -1031,25 +1095,46 @@ def main():
     
     # Initialize session state
     initialize_session_state()
-    
+
     # Render sidebar
     render_sidebar()
-    
-    # Main content area
-    st.title("📚 Answer IQ")
-    st.caption("Retrieval-Augmented Generation Knowledge Base System")
-    
+
+    # ── Header ──────────────────────────────────────────────────────────────
+    hcol, bcol = st.columns([5, 1])
+    with hcol:
+        st.title("📚 Answer IQ")
+        st.caption("Ask questions about your documents – powered by OpenAI or Groq")
+    with bcol:
+        if st.session_state.get("llm_api_key", "").strip():
+            provider = st.session_state.get("llm_provider", "groq").upper()
+            model = st.session_state.get("llm_model", "")
+            st.success(f"**{provider}**\n{model}")
+
     st.markdown("---")
-    
-    # Tabs
-    tab1, tab2, tab3 = st.tabs(["📝 Text Query", "🎤 Voice Query", "📋 History"])
-    
+
+    # ── Onboarding banners ────────────────────────────────────────────────
+    if not st.session_state.get("llm_api_key", "").strip():
+        provider_display = st.session_state.get("llm_provider", "groq").capitalize()
+        st.info(
+            f"👈 **Step 1 – Enter your {provider_display} API key** in the sidebar.\n\n"
+            "Groq offers a **free tier** with fast inference – "
+            "sign up at [console.groq.com](https://console.groq.com)."
+        )
+    elif not st.session_state.kb_ready:
+        st.info(
+            "👈 **Step 2 – Upload documents.** "
+            "Add PDF or TXT files in the sidebar, then click **⚡ Process Documents**."
+        )
+
+    # ── Tabs ─────────────────────────────────────────────────────────────
+    tab1, tab2, tab3 = st.tabs(["💬 Ask a Question", "🎤 Voice Query", "📋 History"])
+
     with tab1:
         render_text_query_tab()
-    
+
     with tab2:
         render_voice_query_tab()
-    
+
     with tab3:
         render_history_tab()
 

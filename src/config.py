@@ -31,15 +31,20 @@ TOP_K_RESULTS = 5
 SIMILARITY_THRESHOLD = 0.3
 
 # Generation model settings
-GENERATION_MODEL_NAME = "google/flan-t5-base"
-GENERATION_API_MODEL = "gpt-4o-mini"
-MAX_NEW_TOKENS = 256
+GENERATION_MODEL_NAME = "google/flan-t5-base"  # kept for reference only
+GENERATION_API_MODEL = "llama-3.3-70b-versatile"   # default when using Groq
+MAX_NEW_TOKENS = 512
 TEMPERATURE = 0.7
 DO_SAMPLE = True
 
-# Whisper settings - Using HuggingFace Transformers pipeline
-WHISPER_MODEL_NAME = "openai/whisper-large-v3"  # High accuracy model
-WHISPER_MODEL_SIZE = "large-v3"  # For display purposes
+# LLM provider settings
+GROQ_API_BASE = "https://api.groq.com/openai/v1"
+OPENAI_DEFAULT_MODEL = "gpt-4o-mini"
+GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
+
+# Whisper settings – use a small model so Streamlit Cloud stays within memory limits
+WHISPER_MODEL_NAME = "openai/whisper-base"   # upgrade to whisper-large-v3 locally if desired
+WHISPER_MODEL_SIZE = "base"
 SUPPORTED_AUDIO_FORMATS = [".wav", ".mp3", ".m4a", ".ogg", ".flac"]
 
 # FAISS index settings
@@ -50,9 +55,12 @@ METADATA_FILE = INDEX_DIR / "metadata.json"
 HISTORY_FILE = CACHE_DIR / "query_history.json"
 MAX_HISTORY_ENTRIES = 100
 
-# Device configuration
-import torch
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# Device configuration – graceful fallback if torch is not installed
+try:
+    import torch
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+except ImportError:
+    DEVICE = "cpu"
 
 # Disable TensorFlow to avoid Keras conflicts
 os.environ["TRANSFORMERS_NO_TF"] = "1"

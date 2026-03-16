@@ -1,6 +1,6 @@
 """
 Generation module for Answer IQ.
-Handles context-aware answer generation using API-based LLMs.
+Handles context-aware answer generation via OpenAI and Groq APIs.
 """
 
 from typing import List
@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from .config import (
     GENERATION_API_MODEL,
+    GROQ_API_BASE,
     MAX_NEW_TOKENS,
     TEMPERATURE
 )
@@ -32,16 +33,19 @@ class AnswerGenerator:
     Designed to minimize hallucinations and stay grounded in retrieved context.
     """
     
-    def __init__(self, api_key: str, model_name: str = GENERATION_API_MODEL):
+    def __init__(self, api_key: str, model_name: str = GENERATION_API_MODEL,
+                 provider: str = "groq"):
         """
         Initialize the answer generator.
-        
+
         Args:
-            api_key: API key for the LLM provider
-            model_name: API model identifier
+            api_key: API key for the chosen provider
+            model_name: Model identifier (provider-specific)
+            provider: "openai" or "groq"
         """
         self.api_key = api_key
         self.model_name = model_name
+        self.provider = provider.lower()
         self.client = None
         self._loaded = False
     
@@ -53,8 +57,11 @@ class AnswerGenerator:
         if not self.api_key or not self.api_key.strip():
             raise ValueError("API key is required for answer generation.")
 
-        self.client = OpenAI(api_key=self.api_key.strip())
-        
+        client_kwargs = {"api_key": self.api_key.strip()}
+        if self.provider == "groq":
+            client_kwargs["base_url"] = GROQ_API_BASE
+
+        self.client = OpenAI(**client_kwargs)
         self._loaded = True
     
     def generate(self, query: str, context: str, 

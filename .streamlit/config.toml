@@ -5,9 +5,9 @@
 
 [server]
 enableCORS = false
-enableXsrfProtection = false
+enableXsrfProtection = true
 headless = true
-runOnSave = true
+maxUploadSize = 200
 
 [browser]
 gatherUsageStats = false
